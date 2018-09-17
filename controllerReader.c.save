@@ -1,0 +1,208 @@
+#include "controllerReader.h"
+
+/*
+int main(int argc, char *argv[])
+{
+	gamepadReader();
+	return 0;
+}
+*/
+
+int etime = 0;
+void *gamepadReader()
+{
+	int show = 1;  // turn on off debugging
+
+	debugLogging(show,False,"gpReader\n");
+    int fd = open (gamepadFile,O_RDONLY);
+    struct js_event e;
+
+    int stopAll;
+    int startAll;
+    
+    if(typeGamepad == FX)
+    {
+        stopAll = FX_NUMBER_BUTTON_START;
+
+    }
+    else
+    {
+       stopAll = SNES_NUMBER_BUTTON_START;
+       startAll = SNES_NUMBER_BUTTON_SELECT;
+    }
+    while (1)
+    {
+       read (fd, &e, sizeof(e));
+	   if(e.time != etime)
+	   {
+		   etime = e.time;
+		   if(isAligned())
+		   {
+		   
+			   debugLogging(show,False,"what? %d %d %d %d\n",e.time,e.value,e.type,e.number);
+                           if(ty
+			   if(e.type == GP_EVENT_BUTTON && e.value == GP_VALUE_BUTTON_PRESS)
+			   {
+				   switch(e.number)
+				   {
+					   case GP_NUMBER_BUTTON_X :						   
+						   altOffset += altButtonKeySteps;
+						   debugLogging(show,False,"altoffset %ld\n",altOffset);
+					   break;
+					   case GP_NUMBER_BUTTON_A :
+						   azOffset += azButtonKeySteps;
+						   debugLogging(show,False,"azoffset %ld\n",azOffset);
+					   break;
+					   case GP_NUMBER_BUTTON_B :
+						   altOffset -= altButtonKeySteps;
+						   debugLogging(show,False,"altoffset %ld\n",altOffset);
+					   break;
+					   case GP_NUMBER_BUTTON_Y :
+						   azOffset -= azButtonKeySteps;
+						   debugLogging(show,False,"azoffset %ld\n",azOffset);
+					   break;
+					   case stopAll :
+						   enableMotor(False);
+					   break;
+					   case startAll :
+						   enableMotor(True);
+					   break;
+				   }
+			   }
+			   else if(e.type == JS_EVENT_AXIS)
+			   {
+				   if(e.number == JS_NUMBER_AXIS_VERTICAL)
+				   {
+					   if(e.value == JS_VALUE_AXIS_UP)
+					   {
+						   altOffset += altJoyKeySteps;
+						   debugLogging(show,False,"altoffset %ld\n",altOffset);
+					   }
+					   else if (e.value == JS_VALUE_AXIS_DOWN)
+					   {
+						   altOffset -=altJoyKeySteps;
+						   debugLogging(show,False,"altoffset %ld\n",altOffset);
+					   }
+				   }
+				   if(e.number == JS_NUMBER_AXIS_HORIZONTAL)
+				   {
+					   if(e.value == JS_VALUE_AXIS_LEFT)
+					   {
+						   azOffset += azJoyKeySteps;
+						   debugLogging(show,False,"azoffset %ld\n",azOffset);
+					   }
+					   else if (e.value == JS_VALUE_AXIS_RIGHT)
+					   {
+						   azOffset -=azJoyKeySteps;
+						   debugLogging(show,False,"azoffset %ld\n",azOffset);
+					   }
+				   }
+			   }
+		   }
+		   else 
+           {
+			   debugLogging(show,False,"%d %d %d %d\n",e.time,e.value,e.type,e.number);
+			   if(e.type == JS_EVENT_BUTTON )
+			   {
+				   switch(e.number)
+				   {
+					   case JS_NUMBER_BUTTON_X :
+						   debugLogging(show,False,"X\n");
+						   if(e.value == JS_VALUE_BUTTON_PRESS)
+						   {
+							   altUp = True;
+						   }
+						   else
+						   {
+							   altUp = False;
+						   }
+					   break;
+					   case JS_NUMBER_BUTTON_A :
+						   debugLogging(show,False,"A\n");
+						   if(e.value == JS_VALUE_BUTTON_PRESS)
+						   {
+							   azRight = True;
+						   }
+						   else
+						   {
+							   azRight = False;
+						   }
+					   break;
+					   case JS_NUMBER_BUTTON_B :
+						   debugLogging(show,False,"B\n");
+						   if(e.value == JS_VALUE_BUTTON_PRESS)
+						   {
+							   altDown = True;
+						   }
+						   else
+						   {
+							   altDown = False;
+						   }
+					   break;
+					   case JS_NUMBER_BUTTON_Y :
+						   debugLogging(show,False,"Y\n");
+						   if(e.value == JS_VALUE_BUTTON_PRESS)
+						   {
+							   azLeft = True;
+						   }
+						   else
+						   {
+							   azLeft = False;
+						   }
+					   break;
+					   case JS_NUMBER_BUTTON_START :
+						   enableMotor(False);
+					   break;
+					   case JS_NUMBER_BUTTON_SELECT :
+						   enableMotor(True);
+					   break;
+					   case JS_NUMBER_BUTTON_LEFT :
+					   break;
+					   case JS_NUMBER_BUTTON_RIGHT :
+					   break;
+				   }
+			   }
+			   else if(e.type == JS_EVENT_AXIS)
+			   {
+				   if(e.number == JS_NUMBER_AXIS_VERTICAL)
+				   {
+					   if(e.value == JS_VALUE_AXIS_VERT_RELEASE)
+					   {
+						   altSlowUp = False;
+						   altSlowDown = False;
+					   }
+					   if(e.value == JS_VALUE_AXIS_UP)
+					   {
+						   altSlowUp = True;
+					   }
+					   else if (e.value == JS_VALUE_AXIS_DOWN)
+					   {
+						   altSlowDown = True;
+					   }
+				   }
+				   if(e.number == JS_NUMBER_AXIS_HORIZONTAL)
+				   {
+					   if(e.value == JS_VALUE_AXIS_HORIZ_RELEASE)
+					   {
+						   azSlowLeft = False;
+						   azSlowRight = False;
+					   }
+					   if(e.value == JS_VALUE_AXIS_LEFT)
+					   {
+						   azSlowLeft = True;
+					   }
+					   else if (e.value == JS_VALUE_AXIS_RIGHT)
+					   {
+						   azSlowRight = True;
+					   }
+				   }
+			   }
+
+			}
+		}
+	   
+    }
+}
+    
+    
+    

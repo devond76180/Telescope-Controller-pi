@@ -1,0 +1,45 @@
+[file_prefs]
+final_new_line=true
+ensure_convert_new_lines=false
+strip_trailing_spaces=false
+replace_tabs=false
+
+[indentation]
+indent_width=4
+indent_type=1
+indent_hard_tab_width=8
+detect_indent=false
+detect_indent_width=false
+indent_mode=2
+
+[project]
+name=TelescopeGoto
+base_path=/home/pi/telescopeController
+description=
+file_patterns=
+
+[long line marker]
+long_line_behaviour=1
+long_line_column=72
+
+[files]
+current_page=0
+FILE_NAME_0=14059;C;0;EUTF-8;1;1;0;%2Fhome%2Fpi%2FtelescopeController%2FmotionManager.c;0;4
+
+[VTE]
+last_dir=/home/pi/telescopeController
+
+[build-menu]
+CFT_00_LB=_Compile
+CFT_00_CM=gcc -g -c "%f" -Wall -Wno-pointer-sign
+CFT_00_WD=
+CFT_01_LB=_Build
+CFT_01_CM=gcc -g -o server "server.c" "parseUtils.c" "motionManager.c" "controllerReader.c" "debug.c" "readConfig.c" -lpthread -lm -lwiringPi -lrt
+CFT_01_WD=/home/pi/telescopeController
+filetypes=C;None;
+NoneFT_00_LB=Compile
+NoneFT_00_CM=gcc -g -c "%f" -Wall -Wno-pointer-sign
+NoneFT_00_WD=
+NoneFT_01_LB=Build
+NoneFT_01_CM=gcc  -g -o "%e" "server.c" "parseUtils.c" "motionManager.c" "controllerReader.c" "debug.c" "readConfig.c" -lpthread -lm -lwiringPi -lrt
+NoneFT_01_WD=

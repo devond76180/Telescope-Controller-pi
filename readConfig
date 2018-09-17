@@ -1,0 +1,185 @@
+#include <stdio.h>
+#include "serverTypes.h>
+
+
+void readConfig()
+{
+    FILE *config;
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    config = fopen("config.txt","r");
+    Boolean alt = True;
+    
+    char *data = NULL;
+    while((read = getline(&line,&len,config)) != -1)
+    {
+	    //printf("%s\n",line);	
+		if(strncmp(line,"alt",3)==0)
+		{
+			//printf("alt\n");
+			alt = True;
+		}
+		else if(strncmp(line,"az",2)==0)
+		{
+			//printf("az\n");
+			alt = False;
+		}
+		else if(strncmp(line,"big",3)==0)
+		{
+			//printf("big\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   data = strtok(NULL,s);
+			   if(alt) 
+			   {
+				   sscanf(data,"%ld",&altBigTooth);
+			   }
+			   else 
+			   {
+				   sscanf(data,"%ld",&azBigTooth);
+			   }
+		    }
+		}
+		else if(strncmp(line,"small",5)==0)
+		{
+			//printf("small\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   data = strtok(NULL,s);
+			   if(alt) 
+			   {
+				   sscanf(data,"%ld",&altSmallTooth);
+			   }
+			   else 
+			   {
+				   sscanf(data,"%ld",&azSmallTooth);
+			   }
+			}
+		}
+		else if(strncmp(line,"pulse",5)==0)
+		{
+			if(alt) 
+			{
+				invertAltPulse = 1;
+			}
+			else
+			{
+				invertAzPulse = 1;
+			}
+		}
+		else if(strncmp(line,"direction",8)==0)
+		{
+			if(alt) 
+			{
+				invertAltDirection = 1;
+			}
+			else
+			{
+				invertAzDirection = 1;
+			}
+		}
+		else if(strncmp(line,"enable",6)==0)
+		{
+			if(alt) 
+			{
+				invertAltEnable = 1;
+			}
+			else
+			{
+				invertAzEnable = 1;
+			}
+		}
+		else if(strncmp(line,"steps",5)==0)
+		{
+			//printf("step\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   data = strtok(NULL,s);
+			   if(alt) 
+			   {
+				   sscanf(data,"%ld",&altStepsPerRev);
+			   }
+			   else 
+			   {
+				   sscanf(data,"%ld",&azStepsPerRev);
+			   }
+			}
+		}
+		else if(strncmp(line,"gamepad",7)==0)
+		{
+			//printf("gamepad\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   data = strtok(NULL,s);
+			   sscanf(data,"%s",gamepadFile);
+			   //printf("gamepad %s\n",gamepadFile);
+			}
+		}
+		else if(strncmp(line,"gotoTimer",9)==0)
+		{
+			//printf("gotoTiemr\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   data = strtok(NULL,s);
+			   sscanf(data,"%d",&gotoTimer);
+			   //printf("gotoTimer %d\n",gotoTimer);
+			}
+		}
+		else if(strncmp(line,"joyKey",6)==0)
+		{
+			//printf("joyKey\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   if(alt) 
+			   {
+				   data = strtok(NULL,s);
+				   sscanf(data,"%d",&altJoyKeySteps);
+				   //printf("joykey1 %d\n",altJoyKeySteps);
+			   }
+			   else
+			   {
+				   data = strtok(NULL,s);
+				   sscanf(data,"%d",&azJoyKeySteps);
+				   //printf("joykey2 %d\n",azJoyKeySteps);
+			   }
+			}
+		}
+		else if(strncmp(line,"buttonKey",9)==0)
+		{
+			//printf("buttonKey\n");
+			char s[2] = "=";
+			data = strtok(line,s);
+			if(data!= NULL)
+			{
+			   if(alt) 
+			   {
+				   data = strtok(NULL,s);
+				   sscanf(data,"%d",&altButtonKeySteps);
+				   //printf("buttonKey1 %d\n",altButtonKeySteps);
+			   }
+			   else
+			   {
+				   data = strtok(NULL,s);
+				   sscanf(data,"%d",&azButtonKeySteps);
+				   //printf("buttonkey2 %d\n",azButtonKeySteps);
+			   }
+			}
+		}
+		
+    }
+    
+    //fclose(config);
+}

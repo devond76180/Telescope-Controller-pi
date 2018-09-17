@@ -1,0 +1,997 @@
+#include "motionManager.h"
+
+//#define TRACK_SIDEREAL   15
+//#define TRACK_LUNAR
+//#define TRACK_SOLAR
+//#define MOVE_1
+//#define MOVE_2
+//#define MOVE_3
+//#define MOVE_4
+
+#define DEBUG
+
+#define SHOW_ALIGN 0
+#define SHOW_GET_ALT_AZ 0
+#define SHOW_RESET_SLEW 0
+#define SHOW_ANGLE 0
+#define SHOW_GET_ALT_AZ_HA 0
+
+typedef void (*sighandler_t) (int);
+
+typedef struct {
+	long double alt;
+	long double az;
+} 
+AltAzType;
+
+typedef struct {
+	long double altMotorPosition;
+	long double azMotorPosition;
+} 
+AltAzMotorPositionType;
+
+
+Boolean doGoto = False;
+Boolean doTracking = False;
+Boolean align = False;
+Boolean userMove = False;
+
+//long double alt = 90;
+//long double az = 0;
+long double altMotorPosition = 0;
+long double azMotorPosition = 0;
+
+long double altGotoPosition = 0;
+long double azGotoPosition = 0;
+
+
+//int trackRate = 0;
+long double altSlewRate;
+long double azSlewRate;
+long double altSlewRateMSec;
+long double azSlewRateMSec;
+long double azSlew;
+long double altSlew;
+long double deltaAz;
+long double deltaAlt;
+
+int azSlewDirection;
+int altSlewDirection;
+int azSlewDirectionPrev;
+int altSlewDirectionPrev;
+long secondsSinceEpocMidnight = 0;
+int prevDay;
+timer_t timerid;
+sigset_t mask;
+struct itimerspec its;
+struct sigevent sev;
+
+int count = 0;
+
+int azCount = 0;
+
+void blockTimer()
+{
+	/* block timer temporarily */
+	sigemptyset (&mask);
+	sigaddset(&mask,SIG);
+	sigprocmask(SIG_SETMASK, &mask, NULL);
+}
+
+AltAzMotorPositionType convertToMotorPostion(AltAzType altAz)
+{
+	AltAzMotorPositionType result;
+	result.altMotorPosition = altAz.alt * altStepsPerDegree;
+	result.azMotorPosition = altAz.az * azStepsPerDegree;
+	return result;
+}
+
+AltAzType getAltAz(int secondsOffset)
+{
+	
+ 	FILE *in1;
+ 	AltAzType result;
+	char buff[512];
+    //convert degrees long into hour long  divide by 15 360/24
+    // get current time
+    time_t mytime = time(0);
+    struct tm* tm_ptr = gmtime(&mytime);
+    int dateHour = tm_ptr->tm_hour;
+    int dateMinute = tm_ptr->tm_min;
+    int dateSecond = tm_ptr->tm_sec + secondsOffset;
+    int day = tm_ptr->tm_mday;
+    int month = tm_ptr->tm_mon+1;
+    int year = tm_ptr->tm_year+1900;
+        
+    
+    if(secondsSinceEpocMidnight==0 || prevDay!=day)
+    {
+		prevDay = day;
+	    secondsSinceEpocMidnight=0;
+    
+		char command2[50];
+		sprintf(command2,"date --date=\"%d/%d/%d UTC\" +%%s",month,day,year);
+#ifdef DEBUG 		
+		debugLogging(SHOW_GET_ALT_AZ_HA,False,"%s\n",command2);
+#endif
+		
+		while(secondsSinceEpocMidnight == 0)
+	    {
+#ifdef DEBUG 
+			debugLogging(SHOW_GET_ALT_AZ,False,"do seconds since epoc midnight\n");
+#endif
+			if((in1 = popen(command2,"r"))!=NULL)
+			{
+				while(fgets(buff, sizeof(buff),in1) != NULL) 
+				{
+					sscanf(buff,"%ld",&secondsSinceEpocMidnight);
+#ifdef DEBUG 
+					debugLogging(SHOW_GET_ALT_AZ_HA,False,"command result %s\n",buff);
+#endif
+				}    
+			}
+	    }
+	}
+    long double offsetGmstNoon = dateHour - 12 + dateMinute/60.0f + dateSecond/3600.0f;
+    long double partDayGmstNoon = offsetGmstNoon/24;
+    long double dayOffset = (secondsSinceEpocMidnight - secondsEpoch1_1_2000)/(60.0*60.0*24.0) + partDayGmstNoon;
+    //GMST noon sideral time in hms
+#ifdef DEBUG 
+    long double gmst = 18.697374558+24.06570982441908 * (dayOffset);
+    long double gmstMod = fmod(gmst,24);
+    int hour = gmstMod;
+    int minute = (gmstMod - hour)* 60.0;
+    long double second = ((gmstMod - hour) * 60.0 - minute) * 60.0; 
+    debugLogging(SHOW_GET_ALT_AZ_HA,False,"conv inputs %Lf %Lf %Lf %Lf %Lf \n",dayOffset,offsetGmstNoon,partDayGmstNoon);
+    debugLogging(SHOW_GET_ALT_AZ_HA,False,"gmst LST %d:%d:%Lf \n",hour,minute,second);
+#endif
+    //local sideral time offest to current gmt by 12 hours (since reference is noon
+    //time then offset local longitiude.
+    long double lstLong = 18.697374558+24.06570982441908 * (dayOffset) - longitudeHours;
+    long double lstLongMod = fmod(lstLong,24);
+    long double lstLongDegrees = lstLongMod *15;
+    long double HA = lstLongDegrees - raDegrees;
+    if(HA < 0)
+       HA += 360;
+ #ifdef DEBUG 
+    long double haHms = HA /15;
+	int hours = haHms;
+	int minutes = (haHms - hours) * 60.0;
+	long double seconds = ((haHms - hours) * 60.0 - minutes) * 60.0;  
+    debugLogging(SHOW_GET_ALT_AZ,False,"HA %Lf %dh %dm %Lfs\n",HA,hours,minutes,seconds);        
+
+#endif
+    long double c1 = HA * C_PI180;
+    long double c2 = cosl(declinationDegrees * C_PI180);
+    long double x = cosl(c1) * c2;
+    long double y = sinl(c1) * c2;
+    long double z = sinl(declinationDegrees * C_PI180);
+    
+    long double c3 = cosl(C_LATCALC);
+    long double c4 = sinl(C_LATCALC);
+    long double xhor = x * c3 - z * c4;
+    long double yhor = y;
+    long double zhor = x * c4 + z * c3;
+    
+    result.az = atan2l(yhor,xhor) * (C_180PI) + 180;
+    result.alt= asinl(zhor) * C_180PI;
+    
+#ifdef DEBUG 
+    int azDegree = result.az;
+    int azMinute = (result.az - azDegree) * 60;  
+    float azSecond = ((result.az - azDegree) * 60 - azMinute) * 60.0;
+    debugLogging(SHOW_GET_ALT_AZ,False,"convAz %d:%d:%Lf %Lf \n",azDegree,azMinute,azSecond,result.az);
+    int altDegree = result.alt;
+    int altMinute = (result.alt - altDegree) * 60;  
+    float altSecond = ((result.alt - altDegree) * 60 - altMinute) * 60.0;
+    debugLogging(SHOW_GET_ALT_AZ,False,"convAlt %d:%d:%Lf %Lf \n",altDegree,altMinute,altSecond,result.alt);
+#endif
+    return result;
+}
+
+
+
+void resetSlew()
+{
+#ifdef DEBUG 
+	
+	int showFile = 0;  // turn on off debugging
+	int showSlewAdjust = 0;
+	int showTrackUpdate = 1;
+	debugLogging(SHOW_RESET_SLEW,True,"reset slew\n");
+    //debugLogging(1,False,"azCount %d\n",azCount);
+#endif
+	azCount = 0;
+	count = 0;
+	AltAzType altAz = getAltAz(1);
+	AltAzMotorPositionType locationPlus = convertToMotorPostion(altAz);
+	// also equals slew rate steps per second
+    if(addLeftLarge)
+	{
+		azOffset += azButtonKeySteps;
+	}
+	if(addRightLarge)
+	{
+		azOffset -= azButtonKeySteps;
+	}
+    if(addLeftSmall)
+	{
+		azOffset += azJoyKeySteps;
+	}
+	if(addRightSmall)
+	{
+		azOffset -= azJoyKeySteps;
+	}
+#ifdef DEBUG     
+	debugLogging(showSlewAdjust,True,"adjust %Lf \n",locationPlus.azMotorPosition );
+#endif
+    locationPlus.azMotorPosition += azOffset;
+#ifdef DEBUG     
+	debugLogging(showSlewAdjust,True,"adjust2 %Lf \n",locationPlus.azMotorPosition );
+#endif
+	long double deltaAz = locationPlus.azMotorPosition - azMotorPosition; 
+
+	if(fabs(deltaAz) > azSteps360/2)
+	{
+		if(deltaAz < 0)
+		{
+			azMotorPosition -= azSteps360;
+			deltaAz = locationPlus.azMotorPosition - azMotorPosition;
+#ifdef DEBUG     
+ 	        debugLogging(SHOW_RESET_SLEW,False,"delatAz1 %Lf\n",deltaAz);	   
+	        debugLogging(showFile,True,"delatAz1 %Lf\n",deltaAz);	
+#endif
+		}
+		else
+		{ 
+			azMotorPosition += azSteps360;			
+			deltaAz = locationPlus.azMotorPosition - azMotorPosition;
+#ifdef DEBUG     
+	        debugLogging(SHOW_RESET_SLEW,False,"delatAz2 %Lf\n",deltaAz);	   
+	        debugLogging(showFile,True,"delatAz2 %Lf\n",deltaAz);	
+#endif
+		}
+	} 
+    if(addUpLarge)
+	{
+		altOffset += altButtonKeySteps;
+	}
+	if(addDownLarge)
+	{
+		altOffset -= altButtonKeySteps;
+	}
+    if(addUpSmall)
+	{
+		altOffset += altJoyKeySteps;
+	}
+	if(addDownSmall)
+	{
+		altOffset -= altJoyKeySteps;
+	}
+	locationPlus.altMotorPosition += altOffset;
+	long double deltaAlt = (locationPlus.altMotorPosition - altMotorPosition);
+#ifdef DEBUG     
+	int degrees = altAz.alt;
+	int minutes = (altAz.alt - degrees) * 60.0;
+	long double seconds = ((altAz.alt - degrees) * 60.0 - minutes) * 60.0;  
+    struct timeval tv;
+    struct timezone tz;
+    gettimeofday(&tv,&tz);	
+    debugLogging(showTrackUpdate,False,"time %d %d \n",tv.tv_sec,tv.tv_usec);
+	debugLogging(SHOW_ANGLE,False,"motorAZ angle %d:%d:%Lf\n",degrees,minutes,seconds);	  
+	debugLogging(showTrackUpdate,False,"motorAZ P %Lf %Lf %Lf %Lf\n",altAz.az,azMotorPosition,locationPlus.azMotorPosition,deltaAz);	   
+	debugLogging(showTrackUpdate,False,"motorALT P %Lf %Lf %Lf %Lf\n",altAz.alt,altMotorPosition,locationPlus.altMotorPosition,deltaAlt);   
+	debugLogging(showFile,True,"motorAZ P %Lf %Lf %Lf %Lf\n",altAz.az,azMotorPosition,locationPlus.azMotorPosition,deltaAz);	  
+	debugLogging(showFile,True,"motorALT P %Lf %Lf %Lf %Lf\n",altAz.alt,altMotorPosition,locationPlus.altMotorPosition,deltaAlt); 
+#endif
+	if(deltaAz < 0) 
+	{
+		azSlewDirection = 1.0;
+	}
+	else 
+	{
+		azSlewDirection = -1.0;
+	}
+	if(deltaAlt < 0)
+	{
+		altSlewDirection = 1.0;
+	}
+	else 
+	{
+		altSlewDirection = -1.0;
+	}
+	azSlewRateMSec = deltaAz/1000.0f;
+	altSlewRateMSec = deltaAlt/1000.0f;
+	azSlew = 0.0;
+	altSlew = 0.0;
+#ifdef DEBUG     
+	debugLogging(SHOW_RESET_SLEW,False,"slews %Lf %Lf\n",azSlewRateMSec,altSlewRateMSec);
+#endif
+}
+
+
+Boolean isAligned() 
+{
+#ifdef DEBUG     
+    debugLogging(SHOW_ALIGN,False,"is align %d\n",align);
+#endif
+	
+	return align;
+}
+
+void setAlign(Boolean value) 
+{
+
+#ifdef DEBUG     
+    debugLogging(SHOW_ALIGN,False,"set align %d\n",value);
+#endif
+	if(value) 
+	{
+		azOffset = 0;
+		altOffset = 0;
+		blockTimer();
+		align = True;
+		userMove = False;
+#ifdef DEBUG     
+        debugLogging(SHOW_ALIGN,False,"align true %d\n",userMove);
+#endif
+		// set align before call enableMotor otherwise with start useMove
+		enableMotor(True);
+		AltAzType altAz = getAltAz(0);
+		AltAzMotorPositionType align = convertToMotorPostion(altAz);
+		altMotorPosition = align.altMotorPosition;
+		azMotorPosition = align.azMotorPosition;
+#ifdef DEBUG     
+	    debugLogging(SHOW_ALIGN,False,"align alt %Lf %Lf\n",altMotorPosition,altAz.alt);
+	    debugLogging(SHOW_ALIGN,False,"align az %Lf %Lf\n",azMotorPosition,altAz.az);
+#endif
+	}
+	else
+	{
+		align = False;
+	}
+}
+
+
+
+void setupGoto()
+{
+#ifdef DEBUG 
+	int show = 1;  // turn on off debugging
+#endif
+	
+	altSlewDirectionPrev = 0;
+	azSlewDirectionPrev = 0;
+#ifdef DEBUG     
+	debugLogging(show,False,"setup goto\n");
+#endif
+	AltAzType altAz = getAltAz(0);
+	AltAzMotorPositionType locationTo = convertToMotorPostion(altAz);
+	// also equals slew rate steps per second
+	azGotoPosition = locationTo.azMotorPosition + azOffset;
+	altGotoPosition = locationTo.altMotorPosition + altOffset;
+	deltaAz = (azGotoPosition - azMotorPosition);
+#ifdef DEBUG     
+    debugLogging(show,False,"deltaAZ azSteps360 %Lf %Lf %ld %Lf %Lf\n",altAz.az,deltaAz,azSteps360,azMotorPosition,azGotoPosition);
+#endif
+	
+	if(fabs(deltaAz) > azSteps360/2)
+	{
+#ifdef DEBUG     
+		debugLogging(show,False,"AZ > half way\n");
+#endif
+		if(deltaAz < 0.0)
+		{
+			deltaAz += azSteps360;
+#ifdef DEBUG     
+		    debugLogging(show,False,"deltaAZ %Lf \n",deltaAz);
+#endif
+		}
+		else 
+		{ 
+			deltaAz -= azSteps360;
+#ifdef DEBUG     
+		    debugLogging(show,False,"deltaAZ %Lf \n",deltaAz);
+#endif
+		}
+	}
+	deltaAlt = (altGotoPosition - altMotorPosition); 
+#ifdef DEBUG     
+    debugLogging(show,False,"deltaAlt  % Lf %Lf %Lf %Lf \n",altAz.alt,deltaAlt,altMotorPosition,altGotoPosition);
+#endif
+	azSlewDirection = 0;
+	altSlewDirection = 0;
+	if(deltaAz < 0) 
+	{
+		azSlewDirection = -1.0;
+		deltaAz = fabs(deltaAz);
+	}
+	else if (deltaAz > 0)
+	{
+		azSlewDirection = 1.0;
+	}
+	if(deltaAlt < 0)
+	{
+		altSlewDirection = 1.0;
+		deltaAlt= fabs(deltaAlt);
+	}
+	else if(deltaAlt > 0)
+	{
+		altSlewDirection = -1.0;
+	}
+}
+
+// if not aligned do nothing
+// if not change value to nothing
+// if different assign value, start tracking
+void setTracking(Boolean value) 
+{
+	if(!align)
+		return;
+	if(doTracking != value)
+	{
+		doTracking = value;
+		if(doTracking)
+		{
+			doGoto = False;
+				
+			blockTimer();		
+			/* start timer */
+			its.it_value.tv_sec = 0;
+			its.it_value.tv_nsec = 1000000;
+			its.it_interval.tv_sec = 0;
+			its.it_interval.tv_nsec = 1000000;
+			
+			timer_settime(timerid, 0, &its, NULL);
+#ifdef DEBUG     
+	debugLogging(1,False,"set Tracking Reset Slew","");
+#endif
+			resetSlew();
+			/* unblock */
+			sigprocmask(SIG_UNBLOCK,&mask, NULL);
+		}
+	}
+
+}
+
+// must be aligned to do anyting
+// if not change value to nothing
+// if different assign value, go goto.  Goto finsishes by switching to tracking
+
+void setGoto(Boolean value) 
+{
+#ifdef DEBUG 
+	int show = 0;  // turn on off debugging
+#endif	
+	doneMoving = False;
+	moving = True;
+#ifdef DEBUG     
+	debugLogging(show,False,"set goto %d %d %d\n",align,doGoto,value);
+#endif
+	if(!align) 
+	{	    
+	    declinationNew.degrees = declination.degrees;
+		declinationNew.minutes = declination.minutes;
+		declinationNew.seconds= declination.seconds;
+		raNew.hours = ra.hours;
+		raNew.minutes = ra.minutes;
+		raNew.seconds = ra.seconds;
+	   return;
+    }
+	if(doGoto!= value)
+	{
+		doGoto = value;
+		if(doGoto)
+		{
+			doTracking = False;
+			setupGoto();
+			/* block timer temporarily */
+			blockTimer();
+			//sigemptyset (&mask);
+			//sigaddset(&mask,SIG);
+			//sigprocmask(SIG_SETMASK, &mask, NULL);
+						
+			/* start timer */
+			its.it_value.tv_sec = 0;
+			its.it_value.tv_nsec = gotoTimer;
+			its.it_interval.tv_sec = 0;
+			its.it_interval.tv_nsec = gotoTimer;
+			
+			timer_settime(timerid, 0, &its, NULL);
+			
+			/* unblock */
+			sigprocmask(SIG_UNBLOCK,&mask, NULL);
+		}
+		else
+		{
+			declinationNew.degrees = declination.degrees;
+			declinationNew.minutes = declination.minutes;
+			declinationNew.seconds= declination.seconds;
+			raNew.hours = ra.hours;
+			raNew.minutes = ra.minutes;
+			raNew.seconds = ra.seconds;
+		}
+	}
+	else
+	{
+		declinationNew.degrees = declination.degrees;
+		declinationNew.minutes = declination.minutes;
+		declinationNew.seconds= declination.seconds;
+		raNew.hours = ra.hours;
+		raNew.minutes = ra.minutes;
+		raNew.seconds = ra.seconds;
+	}
+
+	
+}
+
+// must be aligned to do anyting
+// if not change value to nothing
+// if different assign value, go goto.  Goto finsishes by switching to tracking
+
+void setUserMove() 
+{
+#ifdef DEBUG 
+	int show = 0;  // turn on off debugging
+	debugLogging(show,False,"setUserMove \n");
+#endif
+	if(align) 
+	{	    
+	   return;
+    }
+#ifdef DEBUG     
+	debugLogging(show,False,"setUserMove 2 %d\n",setupTimer);
+#endif
+    userMove = True;
+    /* block timer temporarily */
+	blockTimer();
+	//sigemptyset (&mask);
+	//sigaddset(&mask,SIG);
+	//sigprocmask(SIG_SETMASK, &mask, NULL);
+				
+	/* start timer */
+	its.it_value.tv_sec = 0;
+	its.it_value.tv_nsec = setupTimer;
+	its.it_interval.tv_sec = 0;
+	its.it_interval.tv_nsec = setupTimer;
+	
+	timer_settime(timerid, 0, &its, NULL);
+	
+	/* unblock */
+	sigprocmask(SIG_UNBLOCK,&mask, NULL);
+}
+
+void moveAltMotor(int direction)
+{
+#ifdef DEBUG 
+	int show = 0;  // turn on off debugging
+#endif
+
+#ifdef DEBUG
+     debugLogging(show,False,"alt move %d\n",direction);
+#endif
+	if(direction != altSlewDirectionPrev)
+	{
+		if(direction < 0) 
+		{
+			direction = 0;
+		}
+		digitalWrite(ALT_DIR_PIN,direction ^ invertAltDirection);
+		altSlewDirectionPrev = direction;	
+	    delayMicroseconds(3);
+	}
+	digitalWrite(ALT_PULSE_PIN,1 ^ invertAltPulse);
+	delayMicroseconds(3);
+	digitalWrite(ALT_PULSE_PIN,0 ^ invertAltPulse);	
+}
+
+void moveAzMotor(int direction)
+{
+#ifdef DEBUG 
+	int show = 0;  // turn on off debugging
+#endif	
+	
+#ifdef DEBUG     
+    debugLogging(show,False,"az move %d\n",direction);
+#endif
+	if(direction != azSlewDirectionPrev)
+	{
+		if(direction < 0) 
+		{
+			direction = 0;
+		}
+		digitalWrite(AZ_DIR_PIN,direction ^ invertAzDirection);
+		azSlewDirectionPrev = direction;	
+	    delayMicroseconds(3);
+	}
+	digitalWrite(AZ_PULSE_PIN,1 ^ invertAzPulse);
+	delayMicroseconds(3);
+	digitalWrite(AZ_PULSE_PIN,0 ^ invertAzPulse);	
+}
+
+
+
+
+void stepMotorsSidereal()
+{
+#ifdef DEBUG 
+	int showAz = 0;  // turn on off debugging
+	int showAzMove = 0;  // turn on off debugging
+	int showAlt = 0;  // turn on off debugging
+	int showAltMove = 0;  // turn on off debugging
+	int showFile = 0;  // turn on off debugging
+#endif
+
+#ifdef DEBUG     
+			debugLogging(showAz,False,"az pre %Lf %Lf\n",azMotorPosition,azSlewRateMSec);		    
+			debugLogging(showFile,True,"az1- %Lf %Lf %Lf\n",azMotorPosition,azSlew,azSlewRateMSec);		
+#endif
+    int azMpPrev = azMotorPosition;   
+    azMotorPosition += azSlewRateMSec;
+	int azMpCurrent = azMotorPosition;
+ #ifdef DEBUG     
+			debugLogging(showAz,False,"az post %Lf %Lf %d %d\n",azMotorPosition,azSlewRateMSec,azMpPrev,azMpCurrent);		    
+			debugLogging(showFile,True,"az2- %Lf %Lf %Lf\n",azMotorPosition,azSlew,azSlewRateMSec);		
+#endif
+    if(azMpPrev != azMpCurrent)
+	{
+        azCount++;
+		if(azSlewRateMSec < 0.00) 
+		{
+#ifdef DEBUG     
+			debugLogging(showAzMove,False,"az- %Lf %Lf %d %d\n",azMotorPosition,azSlewRateMSec,azMpPrev,azMpCurrent);		    
+			debugLogging(showFile,True,"az- %Lf %Lf \n",azMotorPosition,azSlewRateMSec);		
+#endif
+            
+			moveAzMotor(-1);
+	    }		
+	    else
+	    {
+#ifdef DEBUG     
+			debugLogging(showAzMove,False,"az+ %Lf %Lf %d %d\n",azMotorPosition,azSlewRateMSec,azMpPrev,azMpCurrent);		   
+			debugLogging(showFile,True,"az+ %Lf %Lf \n",azMotorPosition,azSlew);		
+#endif
+			moveAzMotor(1);
+		}	
+	}
+
+#ifdef DEBUG     
+			debugLogging(showAlt,False,"alt pre %Lf %Lf\n",altMotorPosition,altSlewRateMSec);
+#endif
+    int altMpPrev = altMotorPosition;   
+	altMotorPosition += altSlewRateMSec;
+	int altMpCurrent = altMotorPosition;
+#ifdef DEBUG     
+			debugLogging(showAlt,False,"alt post %Lf %Lf %d %d\n",altMotorPosition,altSlewRateMSec,altMpPrev,altMpCurrent);
+#endif
+
+    if(altMpPrev != altMpCurrent)
+	{
+		if(altSlewRateMSec < 0.00) 
+		{
+#ifdef DEBUG     
+			debugLogging(showAltMove,False,"alt %Lf %Lf %d %d\n",altMotorPosition,altSlewRateMSec,altMpPrev,altMpCurrent);
+#endif
+			moveAltMotor(1);
+		}
+		else
+		{
+#ifdef DEBUG     
+			debugLogging(showAltMove,False,"alt- %Lf %Lf %d %d\n",altMotorPosition,altSlewRateMSec,altMpPrev,altMpCurrent);
+#endif
+			moveAltMotor(-1);
+		}
+	}
+	
+	count++;
+	if(count > 1000) 
+	{
+		count = 0;
+#ifdef DEBUG     
+	debugLogging(1,False,"step side","");
+#endif
+		resetSlew();
+	}
+}
+
+
+void stepMotorsMax()
+{
+#ifdef DEBUG
+	int show = 0;  // turn on off debugging
+#endif	
+
+    Boolean doneAlt = True;
+    Boolean doneAz = True;
+#ifdef DEBUG     
+    debugLogging(show,False,"alt step %Lf %Lf %d\n",altMotorPosition,altGotoPosition,altSlewDirection);
+#endif
+    if(azMotorPosition > azSteps360)
+    {
+#ifdef DEBUG     
+		debugLogging(show,False,"fmod1 %Lf %ld \n",azMotorPosition,azSteps360);
+#endif
+		azMotorPosition = fmod(azMotorPosition,azSteps360);
+#ifdef DEBUG     
+		debugLogging(show,False,"fmod2 %Lf %ld \n",azMotorPosition,azSteps360);
+#endif
+	}
+	if(azMotorPosition < 0.0)
+	{
+#ifdef DEBUG     
+		debugLogging(show,False,"fmod3 %Lf %ld \n",azMotorPosition,azSteps360);
+#endif
+		azMotorPosition += azSteps360;
+#ifdef DEBUG     
+		debugLogging(show,False,"fmod4 %Lf %ld \n",azMotorPosition,azSteps360);
+#endif
+	}
+	if(altSlewDirection > 0)
+	{
+		deltaAlt--;
+		if(deltaAlt > 0) 
+		{
+		    doneAlt = False;
+#ifdef DEBUG     
+            debugLogging(show,False,"alt step 1 %Lf \n",altMotorPosition);
+#endif
+		    altMotorPosition =  altMotorPosition + 1.0;
+#ifdef DEBUG     
+            debugLogging(show,False,"alt step 2 %Lf \n",altMotorPosition);
+#endif
+		    moveAltMotor(altSlewDirection);
+	    }  
+	} 
+	else 
+	{
+		deltaAlt--;
+		if(deltaAlt > 0)
+		{
+		    doneAlt = False;
+#ifdef DEBUG     
+            debugLogging(show,False,"alt step 3 %Lf \n",altMotorPosition);
+#endif
+		    altMotorPosition = altMotorPosition -1.0;
+#ifdef DEBUG     
+            debugLogging(show,False,"alt step 4 %Lf \n",altMotorPosition);
+#endif
+		    moveAltMotor(altSlewDirection);
+	    }  
+	}
+#ifdef DEBUG     
+    debugLogging(show,False,"az step %Lf %Lf %d\n",azMotorPosition,azGotoPosition,azSlewDirection);
+#endif
+	if(azSlewDirection > 0)
+	{
+		deltaAz--;
+		if(deltaAz > 0 )
+		{
+		    doneAz = False;
+		    azMotorPosition = azMotorPosition + 1.0;
+		    moveAzMotor(azSlewDirection);
+	    }  
+	} 
+	else 
+	{
+		deltaAz--;
+		if(deltaAz > 0)
+		{
+		    doneAz = False;
+		    azMotorPosition = azMotorPosition - 1.0;
+		    moveAzMotor(azSlewDirection);
+	    }  
+	}
+#ifdef DEBUG     
+	debugLogging(show,False,"done ?  %d %d\n",doneAlt,doneAz);
+#endif
+	if(doneAlt && doneAz)
+	{
+#ifdef DEBUG     
+		debugLogging(show,False,"done goto\n");
+#endif
+		/* block timer */
+		sigemptyset (&mask);
+		sigaddset(&mask,SIG);
+		sigprocmask(SIG_SETMASK, &mask, NULL);
+		doGoto = False;
+		doneMoving = True;
+		moving = False;
+		declinationNew.degrees = declination.degrees;
+		declinationNew.minutes = declination.minutes;
+		declinationNew.seconds= declination.seconds;
+		raNew.hours = ra.hours;
+		raNew.minutes = ra.minutes;
+		raNew.seconds = ra.seconds;
+ 		
+ 		setTracking(True);
+	}
+}
+
+int userAltMoveCount = 0;
+int userAzMoveCount = 0;
+void stepUserMove()
+{
+	
+	if(altUp)
+	{
+		userAltMoveCount++;
+ 		if(userAltMoveCount == userMoveAltRatio)
+	    {
+			userAltMoveCount = 0;
+		    moveAltMotor(-1);
+		}
+	}
+	else if(altDown)
+	{
+		userAltMoveCount++;
+		if(userAltMoveCount == userMoveAltRatio)
+	    {
+			userAltMoveCount = 0;
+		    moveAltMotor(1);
+		}
+	}
+	else 
+	{
+		userAltMoveCount = 0;
+	}
+	if(azLeft)
+	{
+		userAzMoveCount++;
+		if(userAzMoveCount == userMoveAzRatio)
+	    {
+			userAzMoveCount = 0;
+		    moveAzMotor(-1);
+		}
+	}
+	else if(azRight)
+	{
+		userAzMoveCount++;
+		if(userAzMoveCount == userMoveAzRatio)
+	    {
+			userAzMoveCount = 0;
+		    moveAzMotor(1);
+		}
+	}
+	else
+	{
+		userAzMoveCount = 0;
+	}
+}
+
+void stepMotors()
+{
+#ifdef DEBUG  
+	int show = 0;  // turn on off debugging
+   	debugLogging(show,False,"setp motor %d %d %d\n",doGoto,doTracking,userMove);
+#endif
+
+	if(doGoto)
+	{
+		stepMotorsMax();
+	}
+	else if(doTracking)
+	{
+		stepMotorsSidereal();
+	}
+	else if(userMove)
+	{
+#ifdef DEBUG  
+   	    debugLogging(show,False,"setp user move\n");
+#endif
+		stepUserMove();
+	}
+	
+}
+
+void initMotors()
+{	
+#ifdef DEBUG  
+	int show = 0;  // turn on off debugging
+   	debugLogging(show,False,"Motor init\n");
+#endif
+	// timer_delete(timerid);
+	
+	// 1 ms timer setup
+	
+	struct sigaction sa;
+	
+	sa.sa_flags = SA_SIGINFO;
+	sa.sa_sigaction = stepMotors;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIG,&sa, NULL);
+	
+	/* block timer temporarily */
+	sigemptyset (&mask);
+	sigaddset(&mask,SIG);
+	sigprocmask(SIG_SETMASK, &mask, NULL);
+	
+	/* create timer */
+	sev.sigev_notify = SIGEV_SIGNAL;
+	sev.sigev_signo = SIG;
+	sev.sigev_value.sival_ptr = &timerid;
+	timer_create(CLOCKID,&sev,&timerid);
+		
+    azSlewDirection = 0;
+    altSlewDirection = 0;
+	digitalWrite(ALT_PULSE_PIN,altSlewDirection);
+	digitalWrite(AZ_PULSE_PIN,azSlewDirection);
+	delayMicroseconds(3);
+	altSlewDirectionPrev = altSlewDirection;	
+	azSlewDirectionPrev = azSlewDirection;	
+
+
+    azSlewDirectionPrev = 0;
+    altSlewDirectionPrev = 0;
+    
+#ifdef DEBUG     
+    debugLogging(show,False,"wiring \n");
+#endif
+    wiringPiSetupPhys();
+	
+	
+	pinMode(STOP_PIN,INPUT);
+	pinMode(RELAY_PIN,OUTPUT);
+	
+  	digitalWrite(RELAY_PIN,1);
+	
+    pinMode(ALT_DIR_PIN,OUTPUT);
+    pinMode(ALT_PULSE_PIN,OUTPUT);
+    pinMode(ALT_ENABLE_PIN,OUTPUT);     
+
+    pinMode(AZ_DIR_PIN,OUTPUT);
+    pinMode(AZ_PULSE_PIN,OUTPUT);
+    pinMode(AZ_ENABLE_PIN,OUTPUT);
+    
+    pinMode(SHIFTER_ENABLE_PIN,OUTPUT);
+   
+    pullUpDnControl(SHIFTER_ENABLE_PIN,PUD_DOWN);
+    
+    pullUpDnControl(SHIFTER_ENABLE_PIN,PUD_DOWN);
+   
+  	digitalWrite(AZ_PULSE_PIN,1 ^ invertAzPulse);
+  	digitalWrite(ALT_PULSE_PIN,1 ^ invertAltPulse);
+   
+  	digitalWrite(SHIFTER_ENABLE_PIN,1);
+#ifdef DEBUG     
+  	debugLogging(show,False,"test %d %d\n", invertAltEnable,1^ invertAltEnable);
+#endif
+    enableMotor(True);
+#ifdef DEBUG     
+   	debugLogging(show,False,"Motor init\n");
+#endif
+   
+}
+
+void enableMotor(Boolean value)
+{
+#ifdef DEBUG 
+	int show = 0;  // turn on off debugging    
+    debugLogging(show,False,"enable Motor \n");
+#endif
+
+	if(value)
+	{
+		digitalWrite(ALT_ENABLE_PIN,1 ^ invertAltEnable);
+		digitalWrite(AZ_ENABLE_PIN,1 ^ invertAzEnable);
+        debugLogging(show,False,"enable Motor %d \n",align);
+		if(!align)
+		{
+            debugLogging(show,False,"enable Motor userMove\n");
+			userMove = True;
+			setUserMove();
+		}
+	} 
+	else
+	{
+		setAlign(False);
+		doneMoving = True;
+		moving = False;
+		digitalWrite(ALT_ENABLE_PIN,0 ^ invertAltEnable);
+		digitalWrite(AZ_ENABLE_PIN,0 ^ invertAzEnable);
+	}
+	
+
+}
+    
+    
+    
