@@ -1,3 +1,5 @@
+// test 
+
 // ---------------------------------------------------------------------
 // Program for pointing a telescope by Toshimi Taki
 //

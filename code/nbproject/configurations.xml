@@ -49,7 +49,7 @@
       <makefileType>
         <makeTool>
           <buildCommandWorkingDir>.</buildCommandWorkingDir>
-          <buildCommand>./code/buildtc.sh</buildCommand>
+          <buildCommand>./buildtc.sh</buildCommand>
           <cleanCommand>rm *.o</cleanCommand>
           <executablePath></executablePath>
         </makeTool>
