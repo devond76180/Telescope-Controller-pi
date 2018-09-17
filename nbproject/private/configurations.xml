@@ -267,6 +267,9 @@
         <in>Validate.h</in>
         <in>astro.c</in>
       </df>
+      <df name="schematics">
+        <in>uln2803converter.ps</in>
+      </df>
       <in>align.c</in>
       <in>align.h</in>
       <in>astro.c</in>

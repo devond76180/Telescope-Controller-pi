@@ -267,6 +267,9 @@
         <in>Validate.h</in>
         <in>astro.c</in>
       </df>
+      <df name="schematics">
+        <in>uln2803converter.ps</in>
+      </df>
       <in>align.c</in>
       <in>align.h</in>
       <in>astro.c</in>
@@ -1206,6 +1209,8 @@
       <item path="readConfig.c" ex="false" tool="0" flavor2="0">
       </item>
       <item path="readConfig.h" ex="false" tool="3" flavor2="0">
+      </item>
+      <item path="schematics/uln2803converter.ps" ex="false" tool="3" flavor2="0">
       </item>
       <item path="server.c" ex="false" tool="0" flavor2="0">
       </item>
